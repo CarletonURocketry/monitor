@@ -11,6 +11,7 @@ use log::{error, info};
 use simple_logger::SimpleLogger;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::{Error, Write};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 /// Struct to hold command-line arguments
@@ -22,25 +23,28 @@ struct Args {
     command: Vec<String>,
 }
 
-fn run_command(cmd: &[String]) -> Result<(), Error> {
-    let (command, args) = cmd.split_at(1);
-    let output = Command::new(&command[0]).args(args).output()?;
+fn run_command(command: PathBuf, args: &[String]) -> Result<(), Error> {
+    let output = Command::new(&command).args(args).output()?;
 
+    // If the command exited with an error, we need to log the stderr to a file
     if !output.status.success() {
-        let time: DateTime<Local> = Local::now();
-        error!(
-            "Command failed with exit code {} at {}",
-            output.status, time
-        );
+        error!("Command failed with exit code {}", output.status);
 
         // Make sure that if command is a path with directories, we only get the
         // last part of it
-        let command_name = match command[0].split('/').last() {
-            Some(c) => c,
-            None => &command[0],
-        };
+        let command_name = command
+            .file_name()
+            .ok_or(Error::new(
+                std::io::ErrorKind::Other,
+                "Could not get command name",
+            ))?
+            .to_str()
+            .ok_or(Error::new(
+                std::io::ErrorKind::Other,
+                "Could not convert command name to string",
+            ))?;
 
-        write_to_log_file(&command_name, &output, time.into())?;
+        write_to_log_file(command_name, &output, Local::now().into())?;
         return Err(Error::new(std::io::ErrorKind::Other, "Command failed"));
     }
 
@@ -74,8 +78,30 @@ fn main() {
 
     let args = Args::parse();
 
+    // First, check if the command exists in the PATH or the current directory.
+    // If it's found, add an absolute path to the command.
+    let command = &args.command[0];
+    let command_path = match which::which(&command) {
+        Ok(path) => path,
+        Err(_) => {
+            let current_dir = std::env::current_dir().unwrap();
+            let local_path = current_dir.join(&command);
+            if local_path.exists() {
+                local_path
+            } else {
+                // This panic will happen right as the command is run, so it's
+                // ok
+                error!("Command '{}' not found (on PATH or relative to where this command was run)", command);
+                return;
+            }
+        }
+    };
+
+    // The args are the rest of the command-line arguments
+    let args = &args.command[1..];
+
     loop {
-        match run_command(&args.command) {
+        match run_command(command_path.clone(), args) {
             Ok(_) => (),
             Err(e) => {
                 error!("{}", e);
