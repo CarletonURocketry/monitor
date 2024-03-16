@@ -66,9 +66,11 @@ fn write_to_log_file(command: &str, output: &Output, time: DateTime<Local>) -> R
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
-        .open(log_file_path)?;
+        .open(&log_file_path)?;
 
     file.write_all(&output.stderr)?;
+
+    info!("Wrote stderr to {}", log_file_path.to_str().unwrap_or(""));
 
     Ok(())
 }
@@ -91,7 +93,10 @@ fn main() {
             } else {
                 // This panic will happen right as the command is run, so it's
                 // ok
-                error!("Command '{}' not found (on PATH or relative to where this command was run)", command);
+                error!(
+                    "Command '{}' not found (on PATH or relative to where this command was run)",
+                    command
+                );
                 return;
             }
         }
